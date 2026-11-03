@@ -1,0 +1,21 @@
+{
+  "comment": "Each zone is [upper_line, lower_line]. CE tap (from above) SL = lower. PE tap (from below) SL = upper.",
+  "crude_key": "MCX_FO|573422",
+  "cooldown_min": 30,
+  "bounce_buffer": 5,
+  "max_sl_pts": 30,
+  "reversal_pts": 20,
+  "d2": {
+    "date": "03 Nov",
+    "zones": [
+      [9691.00, 9612.00],
+      [9537.00, 9474.00],
+      [9400.00, 9290.00],
+      [9173.00, 9090.00]
+    ]
+  },
+  "d1": {
+    "date": "03 Nov",
+    "zones": []
+  }
+}

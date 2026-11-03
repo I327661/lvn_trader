@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: lvn-trader
+    runtime: python
+    rootDir: lvn_trader
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
+    envVars:
+      - key: FYERS_APP_ID
+        value: POGBT26YG3-100
+      - key: FYERS_ACCESS_TOKEN
+        sync: false
+      - key: PYTHONUTF8
+        value: "1"

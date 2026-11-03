@@ -1,0 +1,9 @@
+*.log
+*.pyc
+__pycache__/
+trades.csv
+.env
+config/.env
+fyersApi.log
+fyersRequests.log
+levels/chart_*.png

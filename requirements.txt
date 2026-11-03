@@ -1,0 +1,3 @@
+fyers-apiv3
+flask
+python-dotenv
