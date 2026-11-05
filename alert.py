@@ -244,6 +244,13 @@ def next_target(zones, tapped_zone, direction) -> float | None:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 async def run(state: dict | None = None) -> None:
+    # If running under server.py with no token yet, wait until one is pasted
+    if state is not None and not state.get("token"):
+        print("[INFO] No token — waiting (paste via Settings on the dashboard)…")
+        while not state.get("token"):
+            await asyncio.sleep(3)
+        print("[INFO] Token received, starting…")
+
     cfg           = load_config()
     fyers         = load_fyers(
         token=state["token"] if state else None,

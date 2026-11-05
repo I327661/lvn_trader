@@ -416,8 +416,16 @@ def health():
 
 # ── trading thread ─────────────────────────────────────────────────────────────
 def _run_trading():
-    from alert import run
-    asyncio.run(run(state=state))
+    import time as _t
+    while True:
+        try:
+            from alert import run
+            asyncio.run(run(state=state))
+        except SystemExit:
+            pass
+        except Exception as e:
+            print(f"[ERROR] Trading loop crashed: {e} — restarting in 5s")
+        _t.sleep(5)
 
 
 def start_trading():
