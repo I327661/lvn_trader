@@ -162,10 +162,11 @@ const chart=LightweightCharts.createChart(el,{
   rightPriceScale:{borderColor:'#1e2a38'},
   crosshair:{mode:1},
 });
-const ser=chart.addLineSeries({
-  color:'#5aa9ff',lineWidth:2,
+const ser=chart.addCandlestickSeries({
+  upColor:'#3fd68a',downColor:'#ff5c5c',
+  wickUpColor:'#3fd68a',wickDownColor:'#ff5c5c',
+  borderVisible:false,
   lastValueVisible:true,priceLineVisible:false,
-  crosshairMarkerVisible:true,crosshairMarkerRadius:4,
 });
 new ResizeObserver(()=>chart.applyOptions({width:el.offsetWidth,height:el.offsetHeight})).observe(el);
 
@@ -291,10 +292,15 @@ async function refresh(){
     const r=await fetch('/prices');
     if(!r.ok)throw 0;
     const d=await r.json();
-    if(d.prices&&d.prices.length){
-      ser.setData(d.prices);
-      if(firstLoad){chart.timeScale().fitContent();firstLoad=false;}
-      else chart.timeScale().scrollToRealTime();
+    if(d.candles&&d.candles.length){
+      ser.setData(d.candles);
+      const now=Math.floor(Date.now()/1000);
+      if(firstLoad){
+        chart.timeScale().setVisibleRange({from:now-4*3600,to:now+300});
+        firstLoad=false;
+      }else{
+        chart.timeScale().scrollToRealTime();
+      }
     }
     drawZones(d.zones_cfg||[],d.zone_breached||{});
     drawTrade(d.trade);
@@ -332,7 +338,7 @@ state: dict = {
     "price":          None,
     "trade":          None,
     "log":            [],    # last 60 status lines
-    "prices":         [],    # [{time: unix_ts, value: ltp}] — chart data
+    "candles":        [],    # [{time, open, high, low, close}] 1-min OHLC — chart data
     "events":         [],    # [{time, type, direction, price, text}] — chart markers
     "zones_cfg":      [],    # [{id, upper, lower, type, session}] — zone lines
     "zone_trades":    {},    # {zone_id: count} — mirrored from alert.py
@@ -352,7 +358,7 @@ def api_prices():
         "price":         state["price"],
         "trade":         state["trade"],
         "log":           state["log"],
-        "prices":        state["prices"],
+        "candles":       state["candles"],
         "events":        state["events"],
         "zones_cfg":     state["zones_cfg"],
         "zone_trades":   state["zone_trades"],

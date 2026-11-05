@@ -308,7 +308,7 @@ async def run(state: dict | None = None) -> None:
             ensure_csv()
             if state is not None:
                 state["events"] = []
-                state["prices"] = []
+                state["candles"] = []
             print(f"  [INFO] New day {today} — zone trade counts reset  |  Log: {daily_csv()}")
 
         # ── EOD flat ──────────────────────────────────────────────────────────
@@ -355,10 +355,18 @@ async def run(state: dict | None = None) -> None:
         opt_ltp = prices.get(active.option_sym) if active and active.option_sym else None
 
         if state is not None:
-            unix_ts = int(datetime.now(timezone.utc).timestamp())
-            state["prices"].append({"time": unix_ts, "value": ltp})
-            if len(state["prices"]) > 600:
-                state["prices"] = state["prices"][-600:]
+            unix_ts   = int(datetime.now(timezone.utc).timestamp())
+            candle_ts = (unix_ts // 60) * 60
+            candles   = state["candles"]
+            if not candles or candles[-1]["time"] != candle_ts:
+                candles.append({"time": candle_ts, "open": ltp, "high": ltp, "low": ltp, "close": ltp})
+            else:
+                c = candles[-1]
+                if ltp > c["high"]: c["high"] = ltp
+                if ltp < c["low"]:  c["low"]  = ltp
+                c["close"] = ltp
+            if len(candles) > 300:
+                state["candles"] = candles[-300:]
             state["zone_trades"]   = dict(zone_trades)
             state["zone_breached"] = dict(zone_breached)
 
