@@ -244,6 +244,18 @@ def next_target(zones, tapped_zone, direction) -> float | None:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 async def run(state: dict | None = None) -> None:
+    # Populate zones immediately so dashboard shows them even before token is set
+    if state is not None:
+        try:
+            _cfg_early = load_config()
+            state["zones_cfg"] = [
+                {"id": z["id"], "upper": z["upper"], "lower": z["lower"],
+                 "type": z.get("type", "neutral"), "session": z["session"]}
+                for z in _cfg_early["_zones"]
+            ]
+        except Exception:
+            pass
+
     # If running under server.py with no token yet, wait until one is pasted
     if state is not None and not state.get("token"):
         print("[INFO] No token — waiting (paste via Settings on the dashboard)…")
