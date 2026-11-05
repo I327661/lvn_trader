@@ -301,6 +301,19 @@ async def run(state: dict | None = None) -> None:
             state["token_updated"] = False
             print("  [INFO] Fyers token reloaded")
 
+        # ── reload zones if levels updated ────────────────────────────────────
+        if state is not None and state.get("levels_updated"):
+            cfg = load_config()
+            zones = cfg["_zones"]
+            cooldown_s    = int(cfg.get("cooldown_min", 30)) * 60
+            bounce_buffer = float(cfg.get("bounce_buffer", 5))
+            max_sl_pts    = float(cfg.get("max_sl_pts", 30))
+            reversal_pts  = float(cfg.get("reversal_pts", 20))
+            zone_state.clear()
+            zone_extreme.clear()
+            state["levels_updated"] = False
+            print(f"  [INFO] Zones reloaded ({len(zones)} zones)")
+
         # ── check exit ────────────────────────────────────────────────────────
         if active:
             reason = active.check_exit(ltp)
