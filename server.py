@@ -334,6 +334,7 @@ async function doToken(e){
       document.getElementById('tok').value='';
       btn.textContent='✓ '+d.msg;
       btn.style.color='var(--green)';btn.style.borderColor='var(--green)';
+      refresh();
     }else{
       btn.textContent='✗ '+d.msg;
       btn.style.color='var(--red)';btn.style.borderColor='var(--red)';
