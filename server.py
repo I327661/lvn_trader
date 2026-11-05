@@ -117,6 +117,9 @@ main{flex:1;display:flex;min-height:0}
 .sbtn:hover{background:#0d211a}
 .slnk{display:block;text-align:center;font-size:11px;color:var(--blue);text-decoration:none;padding:4px 0;margin-top:4px}
 .slnk:hover{text-decoration:underline}
+.lbtn{background:none;border:1px solid var(--border2);color:var(--dim);padding:2px 9px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;font-family:var(--font);letter-spacing:.5px;transition:all .2s}
+.lbtn:hover{border-color:var(--blue);color:var(--blue)}
+.lbtn.active{border-color:var(--green);color:var(--green)}
 </style>
 </head>
 <body>
@@ -132,7 +135,10 @@ main{flex:1;display:flex;min-height:0}
   <div class="feed-dot" id="feed-dot"></div>
 </header>
 <main>
-  <div class="chart-pane"><div id="chart"></div></div>
+  <div class="chart-pane">
+    <div id="chart"></div>
+    <button class="lbtn active" id="live-btn" style="position:absolute;top:8px;right:8px;z-index:10" onclick="goLive()">● LIVE</button>
+  </div>
   <div class="side">
     <div class="card" id="trade-card">
       <div class="ctitle">POSITION</div>
@@ -180,7 +186,18 @@ const ser=chart.addCandlestickSeries({
 new ResizeObserver(()=>chart.applyOptions({width:el.offsetWidth,height:el.offsetHeight})).observe(el);
 
 // ── zone and trade price lines ─────────────────────────────────────────────────
-let zLines=[],tLines=[],zKey='',tKey='',firstLoad=true,lastP=null;
+let zLines=[],tLines=[],zKey='',tKey='',firstLoad=true,lastP=null,userPanned=false;
+
+chart.timeScale().subscribeVisibleLogicalRangeChange(()=>{
+  userPanned=true;
+  document.getElementById('live-btn').className='lbtn';
+});
+
+function goLive(){
+  userPanned=false;
+  chart.timeScale().scrollToRealTime();
+  document.getElementById('live-btn').className='lbtn active';
+}
 const ZC={supply:'#ff5c5c',demand:'#3fd68a',neutral:'#6a8090'};
 const LS=LightweightCharts.LineStyle;
 
@@ -307,7 +324,8 @@ async function refresh(){
       if(firstLoad){
         chart.timeScale().setVisibleRange({from:now-4*3600,to:now+300});
         firstLoad=false;
-      }else{
+        setTimeout(()=>{userPanned=false;},500);
+      }else if(!userPanned){
         chart.timeScale().scrollToRealTime();
       }
     }
