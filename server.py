@@ -15,7 +15,16 @@ import threading
 from pathlib import Path
 from flask import Flask, request, redirect, jsonify
 
-LEVELS_FILE = Path(__file__).resolve().parent / "levels" / "lvn_levels.json"
+LEVELS_FILE  = Path(__file__).resolve().parent / "levels" / "lvn_levels.json"
+TOKEN_FILE   = Path(__file__).resolve().parent / ".fyers_token"
+
+def _load_persisted_token() -> str:
+    if TOKEN_FILE.exists():
+        t = TOKEN_FILE.read_text().strip()
+        if t:
+            print("[INFO] Loaded token from .fyers_token")
+            return t
+    return ""
 
 # ── dashboard HTML ─────────────────────────────────────────────────────────────
 DASHBOARD_HTML = '''<!doctype html>
@@ -315,10 +324,25 @@ async function doToken(e){
   e.preventDefault();
   const tok=document.getElementById('tok').value.trim();
   if(!tok)return;
-  const fd=new URLSearchParams({token:tok});
-  await fetch('/token',{method:'POST',body:fd});
-  document.getElementById('tok').value='';
-  alert('Token updated!');
+  const btn=e.target.querySelector('button[type="submit"]');
+  const orig=btn.textContent;
+  btn.textContent='Validating…';btn.disabled=true;btn.style.color='var(--amber)';btn.style.borderColor='var(--amber)';
+  try{
+    const r=await fetch('/token',{method:'POST',body:new URLSearchParams({token:tok})});
+    const d=await r.json();
+    if(d.ok){
+      document.getElementById('tok').value='';
+      btn.textContent='✓ '+d.msg;
+      btn.style.color='var(--green)';btn.style.borderColor='var(--green)';
+    }else{
+      btn.textContent='✗ '+d.msg;
+      btn.style.color='var(--red)';btn.style.borderColor='var(--red)';
+    }
+  }catch(ex){
+    btn.textContent='✗ Network error';
+    btn.style.color='var(--red)';btn.style.borderColor='var(--red)';
+  }
+  setTimeout(()=>{btn.textContent=orig;btn.disabled=false;btn.style.color='';btn.style.borderColor='';},4000);
 }
 
 refresh();
@@ -332,7 +356,7 @@ app = Flask(__name__)
 
 state: dict = {
     "app_id":         os.getenv("FYERS_APP_ID", "POGBT26YG3-100"),
-    "token":          os.getenv("FYERS_ACCESS_TOKEN", ""),
+    "token":          os.getenv("FYERS_ACCESS_TOKEN", "") or _load_persisted_token(),
     "token_updated":  False,
     "levels_updated": False,
     "price":          None,
@@ -369,11 +393,34 @@ def api_prices():
 @app.route("/token", methods=["POST"])
 def update_token():
     token = request.form.get("token", "").strip()
-    if token:
-        state["token"] = token
-        state["token_updated"] = True
-        return redirect("/")
-    return "No token provided", 400
+    if not token:
+        return jsonify({"ok": False, "msg": "No token provided"}), 400
+
+    # Validate by hitting Fyers profile API
+    try:
+        from fyers_apiv3 import fyersModel
+        fyers_test = fyersModel.FyersModel(
+            client_id=state["app_id"],
+            token=f"{state['app_id']}:{token}",
+            is_async=False,
+            log_path="",
+        )
+        result = fyers_test.get_profile()
+        if result.get("s") != "ok":
+            return jsonify({"ok": False, "msg": result.get("message", "Fyers API rejected token")}), 400
+    except Exception as ex:
+        return jsonify({"ok": False, "msg": str(ex)}), 500
+
+    state["token"] = token
+    state["token_updated"] = True
+
+    # Persist to file so token survives process restarts
+    try:
+        TOKEN_FILE.write_text(token)
+    except Exception:
+        pass
+
+    return jsonify({"ok": True, "msg": f"Token valid ✓  logged in as {result.get('data', {}).get('fy_id', '')}"})
 
 
 @app.route("/levels", methods=["GET", "POST"])
