@@ -3,7 +3,7 @@
   "crude_key": "MCX_FO|573422",
   "cooldown_min": 30,
   "bounce_buffer": 5,
-  "max_sl_pts": 30,
+  "max_sl_pts": 40,
   "reversal_pts": 20,
   "d2": {
     "date": "03 Nov",

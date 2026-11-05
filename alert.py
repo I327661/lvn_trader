@@ -357,7 +357,6 @@ async def run(state: dict | None = None) -> None:
 
                 if st == "tapped_ce":
                     zone_extreme[i] = min(zone_extreme.get(i, ltp), ltp)   # track lowest inside
-                    reversal_sl = max(zone_extreme[i] - bounce_buffer, ltp - max_sl_pts)
                     if ltp >= upper + bounce_buffer:
                         direction   = "CE"
                         entry_model = "boundary"
@@ -374,7 +373,6 @@ async def run(state: dict | None = None) -> None:
 
                 elif st == "tapped_pe":
                     zone_extreme[i] = max(zone_extreme.get(i, ltp), ltp)   # track highest inside
-                    reversal_sl = min(zone_extreme[i] + bounce_buffer, ltp + max_sl_pts)
                     if ltp < lower - bounce_buffer:
                         direction   = "PE"
                         entry_model = "boundary"
@@ -391,11 +389,22 @@ async def run(state: dict | None = None) -> None:
                 else:
                     continue
 
-                # confirmed → enter
+                # confirmed → compute SL from zone extreme (lowest inside for CE, highest for PE)
                 if direction == "CE":
-                    sl = reversal_sl if entry_model == "reversal" else max(lower, ltp - max_sl_pts)
+                    sl   = zone_extreme[i] - bounce_buffer
+                    risk = ltp - sl
                 else:
-                    sl = reversal_sl if entry_model == "reversal" else min(upper, ltp + max_sl_pts)
+                    sl   = zone_extreme[i] + bounce_buffer
+                    risk = sl - ltp
+
+                # skip if risk exceeds max_sl_pts
+                if risk > max_sl_pts:
+                    zone_state[i] = "idle"
+                    zone_extreme.pop(i, None)
+                    tapped[i] = t
+                    print(f"  [SKIP] {zone['session']} {upper:.0f}/{lower:.0f} {direction} "
+                          f"— risk {risk:.0f}pts > {max_sl_pts:.0f}pts max")
+                    continue
                 target = next_target(zones, zone, direction)
                 tapped[i]     = t
                 zone_state[i] = "idle"
