@@ -161,9 +161,12 @@ main{flex:1;display:flex;min-height:0}
     <div class="settings">
       <details>
         <summary>⚙ Settings</summary>
-        <form class="sform" onsubmit="doToken(event)">
-          <input id="tok" placeholder="Paste Fyers access token…" autocomplete="off">
-          <button class="sbtn" type="submit">Update Token</button>
+        <form class="sform" onsubmit="doExchange(event)">
+          <div style="font-size:10px;color:var(--dim);margin-bottom:2px">Step 1 — Login to Fyers:</div>
+          <a href="/fyers-login" target="_blank" class="sbtn" style="display:block;text-align:center;text-decoration:none;padding:5px 0">🔑 Open Fyers Login →</a>
+          <div style="font-size:10px;color:var(--dim);margin-top:6px;margin-bottom:2px">Step 2 — Paste the auth code from the redirect URL:</div>
+          <input id="authcode" placeholder="Paste auth code JWT here…" autocomplete="off">
+          <button class="sbtn" type="submit" id="exc-btn">Exchange &amp; Start Trading</button>
         </form>
         <a href="/levels" class="slnk">Edit Zones JSON →</a>
       </details>
@@ -356,30 +359,29 @@ async function refresh(){
   }
 }
 
-async function doToken(e){
+async function doExchange(e){
   e.preventDefault();
-  const tok=document.getElementById('tok').value.trim();
-  if(!tok)return;
-  const btn=e.target.querySelector('button[type="submit"]');
-  const orig=btn.textContent;
-  btn.textContent='Validating…';btn.disabled=true;btn.style.color='var(--amber)';btn.style.borderColor='var(--amber)';
+  const code=document.getElementById('authcode').value.trim();
+  if(!code)return;
+  const btn=document.getElementById('exc-btn');
+  btn.textContent='Exchanging…';btn.disabled=true;
   try{
-    const r=await fetch('/token',{method:'POST',body:new URLSearchParams({token:tok})});
+    const r=await fetch('/exchange',{method:'POST',body:new URLSearchParams({auth_code:code})});
     const d=await r.json();
     if(d.ok){
-      document.getElementById('tok').value='';
+      document.getElementById('authcode').value='';
       btn.textContent='✓ '+d.msg;
-      btn.style.color='var(--green)';btn.style.borderColor='var(--green)';
+      btn.style.borderColor='var(--green)';btn.style.color='var(--green)';
       refresh();
     }else{
       btn.textContent='✗ '+d.msg;
-      btn.style.color='var(--red)';btn.style.borderColor='var(--red)';
+      btn.style.borderColor='var(--red)';btn.style.color='var(--red)';
     }
   }catch(ex){
     btn.textContent='✗ Network error';
-    btn.style.color='var(--red)';btn.style.borderColor='var(--red)';
+    btn.style.borderColor='var(--red)';btn.style.color='var(--red)';
   }
-  setTimeout(()=>{btn.textContent=orig;btn.disabled=false;btn.style.color='';btn.style.borderColor='';},4000);
+  setTimeout(()=>{btn.textContent='Exchange & Start Trading';btn.disabled=false;btn.style.borderColor='';btn.style.color='';},5000);
 }
 
 refresh();
@@ -427,13 +429,55 @@ def api_prices():
     })
 
 
+@app.route("/fyers-login")
+def fyers_login():
+    from fyers_apiv3 import fyersModel
+    session = fyersModel.SessionModel(
+        client_id=state["app_id"],
+        secret_key=os.getenv("FYERS_SECRET_KEY", "O105V1TQJ1"),
+        redirect_uri="https://trade.fyers.in/api-login/redirect-uri/index.html",
+        response_type="code",
+        grant_type="authorization_code",
+    )
+    return redirect(session.generate_authcode())
+
+
+@app.route("/exchange", methods=["POST"])
+def exchange_token():
+    auth_code = request.form.get("auth_code", "").strip()
+    if not auth_code:
+        return jsonify({"ok": False, "msg": "No auth code provided"}), 400
+    try:
+        from fyers_apiv3 import fyersModel
+        session = fyersModel.SessionModel(
+            client_id=state["app_id"],
+            secret_key=os.getenv("FYERS_SECRET_KEY", "O105V1TQJ1"),
+            redirect_uri="https://trade.fyers.in/api-login/redirect-uri/index.html",
+            response_type="code",
+            grant_type="authorization_code",
+        )
+        session.set_token(auth_code)
+        result = session.generate_token()
+        if result.get("s") != "ok":
+            return jsonify({"ok": False, "msg": result.get("message", "Token exchange failed")}), 400
+        access_token = result["access_token"]
+    except Exception as ex:
+        return jsonify({"ok": False, "msg": str(ex)}), 500
+
+    state["token"] = access_token
+    state["token_updated"] = True
+    try:
+        TOKEN_FILE.write_text(access_token)
+    except Exception:
+        pass
+    return jsonify({"ok": True, "msg": "Logged in ✓ Trading started"})
+
+
 @app.route("/token", methods=["POST"])
 def update_token():
     token = request.form.get("token", "").strip()
     if not token:
         return jsonify({"ok": False, "msg": "No token provided"}), 400
-
-    # Validate by hitting Fyers profile API
     try:
         from fyers_apiv3 import fyersModel
         fyers_test = fyersModel.FyersModel(
@@ -446,17 +490,14 @@ def update_token():
             return jsonify({"ok": False, "msg": result.get("message", "Fyers API rejected token")}), 400
     except Exception as ex:
         return jsonify({"ok": False, "msg": str(ex)}), 500
-
     state["token"] = token
     state["token_updated"] = True
-
-    # Persist to file so token survives process restarts
     try:
         TOKEN_FILE.write_text(token)
     except Exception:
         pass
-
     return jsonify({"ok": True, "msg": f"Token valid ✓  logged in as {result.get('data', {}).get('fy_id', '')}"})
+
 
 
 @app.route("/levels", methods=["GET", "POST"])
