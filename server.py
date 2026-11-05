@@ -138,6 +138,10 @@ main{flex:1;display:flex;min-height:0}
   <div class="chart-pane">
     <div id="chart"></div>
     <button class="lbtn active" id="live-btn" style="position:absolute;top:8px;right:8px;z-index:10" onclick="goLive()">● LIVE</button>
+    <div style="position:absolute;top:8px;right:74px;z-index:10;display:flex;gap:4px">
+      <button class="lbtn" onclick="zoomIn()">＋</button>
+      <button class="lbtn" onclick="zoomOut()">－</button>
+    </div>
   </div>
   <div class="side">
     <div class="card" id="trade-card">
@@ -197,6 +201,20 @@ function goLive(){
   userPanned=false;
   chart.timeScale().scrollToRealTime();
   document.getElementById('live-btn').className='lbtn active';
+}
+
+function zoomIn(){
+  const r=chart.timeScale().getVisibleLogicalRange();
+  if(!r)return;
+  const c=(r.from+r.to)/2, h=(r.to-r.from)/2*0.6;
+  chart.timeScale().setVisibleLogicalRange({from:c-h,to:c+h});
+}
+
+function zoomOut(){
+  const r=chart.timeScale().getVisibleLogicalRange();
+  if(!r)return;
+  const c=(r.from+r.to)/2, h=(r.to-r.from)/2*1.6;
+  chart.timeScale().setVisibleLogicalRange({from:c-h,to:c+h});
 }
 const ZC={supply:'#ff5c5c',demand:'#3fd68a',neutral:'#6a8090'};
 const LS=LightweightCharts.LineStyle;
