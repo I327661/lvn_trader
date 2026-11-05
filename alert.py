@@ -35,7 +35,7 @@ from fyers_apiv3 import fyersModel
 # ── paths ─────────────────────────────────────────────────────────────────────
 DIR         = Path(__file__).resolve().parent
 LEVELS_FILE = DIR / "levels" / "lvn_levels.json"
-TRADES_FILE = DIR / "trades.csv"
+TRADES_DIR  = DIR / "trades"
 FYERS_ENV   = DIR.parent / "nifty_options_algo" / "config" / ".env"
 
 FUT_SYMBOL   = "MCX:CRUDEOIL26NOVFUT"
@@ -110,12 +110,22 @@ def load_config() -> dict:
     for session in ("d2", "d1"):
         color = "RED" if session == "d2" else "GOLD"
         date_label = cfg.get(session, {}).get("date", "")
-        for pair in cfg.get(session, {}).get("zones", []):
-            upper, lower = float(pair[0]), float(pair[1])
+        for entry in cfg.get(session, {}).get("zones", []):
+            if isinstance(entry, list):
+                upper, lower = float(entry[0]), float(entry[1])
+                zone_id   = f"{upper:.0f}_{lower:.0f}"
+                zone_type = "neutral"
+            else:
+                upper     = float(entry["upper"])
+                lower     = float(entry["lower"])
+                zone_id   = str(entry["id"])
+                zone_type = entry.get("type", "neutral")
             zones.append({
+                "id":      zone_id,
                 "upper":   upper,
                 "lower":   lower,
                 "mid":     round((upper + lower) / 2, 2),
+                "type":    zone_type,
                 "session": session.upper(),
                 "color":   color,
                 "date":    date_label,
@@ -130,29 +140,40 @@ CSV_HEADERS = [
     "date", "entry_time", "zone_upper", "zone_lower", "session", "direction",
     "entry_price", "sl", "target", "fut_pnl_pts",
     "option_strike", "option_type", "option_entry", "option_exit", "option_pnl",
-    "exit_time", "exit_reason",
+    "exit_time", "exit_reason", "lot",
 ]
 
 
+def daily_csv() -> Path:
+    return TRADES_DIR / f"trades_{now_ist().strftime('%Y-%m-%d')}.csv"
+
+
 def ensure_csv() -> None:
-    if not TRADES_FILE.exists():
-        with open(TRADES_FILE, "w", newline="") as f:
+    TRADES_DIR.mkdir(exist_ok=True)
+    path = daily_csv()
+    if not path.exists():
+        with open(path, "w", newline="") as f:
             csv.writer(f).writerow(CSV_HEADERS)
 
 
 def append_trade(row: dict) -> None:
-    with open(TRADES_FILE, "a", newline="") as f:
+    path = daily_csv()
+    if not path.exists():       # new day rolled over between ensure and append
+        with open(path, "w", newline="") as f:
+            csv.writer(f).writerow(CSV_HEADERS)
+    with open(path, "a", newline="") as f:
         csv.writer(f).writerow([row.get(h, "") for h in CSV_HEADERS])
 
 
 # ── trade ─────────────────────────────────────────────────────────────────────
 class Trade:
-    def __init__(self, zone, direction, entry_price, sl, target, entry_time,
+    def __init__(self, zone, zone_id, direction, entry_price, sl, target, entry_time,
                  option_strike, option_sym, option_entry):
         self.upper         = zone["upper"]
         self.lower         = zone["lower"]
         self.session       = zone["session"]
         self.color         = zone["color"]
+        self.zone_id       = zone_id
         self.direction     = direction
         self.entry_price   = entry_price
         self.sl            = sl
@@ -162,16 +183,31 @@ class Trade:
         self.option_sym    = option_sym
         self.option_entry  = option_entry
 
+        self.risk        = abs(entry_price - sl)
+        if direction == "CE":
+            self.lot1_target = entry_price + self.risk
+        else:
+            self.lot1_target = entry_price - self.risk
+        self.lot1_hit = False
+
     def check_exit(self, ltp: float) -> str | None:
+        # Lot 1: 1:1 target (only before it's been booked)
+        if not self.lot1_hit:
+            if self.direction == "CE" and ltp >= self.lot1_target:
+                return "LOT1_TARGET"
+            if self.direction == "PE" and ltp <= self.lot1_target:
+                return "LOT1_TARGET"
+        # Lot 2: use CTC (entry) as SL after lot1 is booked
+        eff_sl = self.entry_price if self.lot1_hit else self.sl
         if self.direction == "CE":
-            if ltp <= self.sl:     return "SL_HIT"
+            if ltp <= eff_sl:      return "SL_HIT"
             if ltp >= self.target: return "TARGET_HIT"
         else:
-            if ltp >= self.sl:     return "SL_HIT"
+            if ltp >= eff_sl:      return "SL_HIT"
             if ltp <= self.target: return "TARGET_HIT"
         return None
 
-    def to_row(self, exit_price, exit_reason, exit_time, option_exit) -> dict:
+    def to_row(self, exit_price, exit_reason, exit_time, option_exit, lot: int | str = 2) -> dict:
         fut_pnl = round(exit_price - self.entry_price, 2) if self.direction == "CE" \
                   else round(self.entry_price - exit_price, 2)
         opt_pnl = round(option_exit - self.option_entry, 2) \
@@ -194,6 +230,7 @@ class Trade:
             "option_pnl":    opt_pnl,
             "exit_time":     exit_time.strftime("%H:%M:%S"),
             "exit_reason":   exit_reason,
+            "lot":           lot,
         }
 
 
@@ -217,6 +254,7 @@ async def run(state: dict | None = None) -> None:
     bounce_buffer = float(cfg.get("bounce_buffer", 5))
     max_sl_pts    = float(cfg.get("max_sl_pts", 30))
     reversal_pts  = float(cfg.get("reversal_pts", 20))
+    breach_pts    = float(cfg.get("breach_pts", 50))
     poll_s        = 30
 
     ensure_csv()
@@ -224,14 +262,18 @@ async def run(state: dict | None = None) -> None:
     print(f"\nLVN Mock Trader  —  {FUT_SYMBOL}  (Fyers)")
     print(f"Zones ({len(zones)}):")
     for z in sorted(zones, key=lambda x: -x["mid"]):
-        print(f"  {z['color']:4s} {z['session']}  {z['upper']:.2f} / {z['lower']:.2f}  ({z['date']})")
-    print(f"\nCooldown: {cooldown_s//60} min  |  Poll: {poll_s}s  |  Trades: {TRADES_FILE}\n")
+        ztype = z.get("type", "neutral")
+        print(f"  {z['color']:4s} {z['session']}  {z['upper']:.2f} / {z['lower']:.2f}  [{ztype:7s}]  ({z['date']})")
+    print(f"\nCooldown: {cooldown_s//60} min  |  Poll: {poll_s}s  |  Log: {daily_csv()}\n")
 
     active: Trade | None     = None
-    tapped: dict[int, datetime] = {}
-    zone_state: dict[int, str]  = {}
-    zone_extreme: dict[int, float] = {}   # high for PE, low for CE
-    prev_ltp: float | None      = None
+    tapped: dict[str, datetime]    = {}
+    zone_state: dict[str, str]     = {}
+    zone_extreme: dict[str, float] = {}   # high for PE, low for CE
+    zone_trades: dict[str, int]    = {}   # completed trades per zone (max 2/day)
+    zone_breached: dict[str, bool] = {}   # supply/demand zones neutralized by breach
+    trade_date: str                = now_ist().strftime("%Y-%m-%d")
+    prev_ltp: float | None         = None
 
     # pre-seed any force_tap entries from config
     for ft in cfg.get("force_tap", []):
@@ -244,16 +286,33 @@ async def run(state: dict | None = None) -> None:
     while True:
         t = now_ist()
 
+        # ── new-day reset ─────────────────────────────────────────────────────
+        today = t.strftime("%Y-%m-%d")
+        if today != trade_date:
+            trade_date = today
+            zone_trades.clear()
+            zone_breached.clear()
+            ensure_csv()
+            print(f"  [INFO] New day {today} — zone trade counts reset  |  Log: {daily_csv()}")
+
         # ── EOD flat ──────────────────────────────────────────────────────────
         if active and t.time() >= MCX_CLOSE:
             syms = [FUT_SYMBOL] + ([active.option_sym] if active.option_sym else [])
             prices   = await fetch_prices(fyers, syms)
             ltp      = prices.get(FUT_SYMBOL, active.entry_price)
             opt_exit = prices.get(active.option_sym) if active.option_sym else None
-            row = active.to_row(ltp, "EOD_FLAT", t, opt_exit)
-            print(f"\n[{t:%H:%M}] EOD FLAT {active.direction} fut {ltp:.0f}  "
-                  f"fut_pnl {row['fut_pnl_pts']:+.0f}  opt_pnl {row['option_pnl'] or '-'}")
+            if active.lot1_hit:
+                # Lot1 already booked; close lot2 at EOD
+                row = active.to_row(ltp, "EOD_FLAT", t, opt_exit, lot=2)
+                print(f"\n[{t:%H:%M}] EOD FLAT lot2 {active.direction} fut {ltp:.0f}  "
+                      f"fut_pnl {row['fut_pnl_pts']:+.0f}  opt_pnl {row['option_pnl'] or '-'}")
+            else:
+                # Both lots still open; close both at same price
+                row = active.to_row(ltp, "EOD_FLAT", t, opt_exit, lot="1+2")
+                print(f"\n[{t:%H:%M}] EOD FLAT both lots {active.direction} fut {ltp:.0f}  "
+                      f"fut_pnl {row['fut_pnl_pts']:+.0f}  opt_pnl {row['option_pnl'] or '-'}")
             append_trade(row)
+            zone_trades[active.zone_id] = zone_trades.get(active.zone_id, 0) + 1
             active = None
 
         if t.time() < MCX_OPEN or t.time() > MCX_CLOSE:
@@ -271,12 +330,28 @@ async def run(state: dict | None = None) -> None:
             continue
         opt_ltp = prices.get(active.option_sym) if active and active.option_sym else None
 
+        # ── breach scan ───────────────────────────────────────────────────────
+        for zone in zones:
+            zid   = zone["id"]
+            ztype = zone.get("type", "neutral")
+            if ztype == "neutral" or zone_breached.get(zid):
+                continue
+            if ztype == "supply" and ltp > zone["upper"] + breach_pts:
+                zone_breached[zid] = True
+                print(f"  !! {zone['color']} {zone['session']} {zone['upper']:.0f}/{zone['lower']:.0f} "
+                      f"supply breached +{breach_pts:.0f}pts → NEUTRAL  (CE + PE now allowed)")
+            elif ztype == "demand" and ltp < zone["lower"] - breach_pts:
+                zone_breached[zid] = True
+                print(f"  !! {zone['color']} {zone['session']} {zone['upper']:.0f}/{zone['lower']:.0f} "
+                      f"demand breached -{breach_pts:.0f}pts → NEUTRAL  (CE + PE now allowed)")
+
         # ── status line ───────────────────────────────────────────────────────
         if active:
             icon    = "▲" if active.direction == "CE" else "▼"
             opt_str = f"  opt {opt_ltp:.0f}" if opt_ltp else ""
+            ctc_tag = "  [CTC]" if active.lot1_hit else ""
             line = (f"[{t:%H:%M:%S}]  fut {ltp:8.2f}{opt_str}  "
-                    f"{icon}{active.direction} SL {active.sl:.2f}  T {active.target:.2f}")
+                    f"{icon}{active.direction} SL {active.sl:.2f}  T {active.target:.2f}{ctc_tag}")
             if state is not None:
                 state["price"] = ltp
                 state["trade"] = {"direction": active.direction, "entry": active.entry_price,
@@ -309,79 +384,106 @@ async def run(state: dict | None = None) -> None:
             bounce_buffer = float(cfg.get("bounce_buffer", 5))
             max_sl_pts    = float(cfg.get("max_sl_pts", 30))
             reversal_pts  = float(cfg.get("reversal_pts", 20))
+            breach_pts    = float(cfg.get("breach_pts", 50))
             zone_state.clear()
             zone_extreme.clear()
+            zone_breached.clear()
+            # zone_trades and tapped intentionally preserved — id-keyed, survive boundary edits
             state["levels_updated"] = False
             print(f"  [INFO] Zones reloaded ({len(zones)} zones)")
 
         # ── check exit ────────────────────────────────────────────────────────
         if active:
             reason = active.check_exit(ltp)
-            if reason:
-                row  = active.to_row(ltp, reason, t, opt_ltp)
+            if reason == "LOT1_TARGET":
+                # Book lot1 at 1:1; move lot2 SL to entry (CTC)
+                row = active.to_row(active.lot1_target, "LOT1_TARGET", t, opt_ltp, lot=1)
+                print(f"\n  ★ LOT1 BOOKED  {active.color} {active.session} {active.direction}  "
+                      f"entry {active.entry_price:.2f} → {active.lot1_target:.2f}  "
+                      f"+{active.risk:.0f}pts  |  LOT2 SL → CTC {active.entry_price:.2f}\n")
+                append_trade(row)
+                active.lot1_hit = True
+                active.sl = active.entry_price   # update display SL to CTC
+            elif reason in ("SL_HIT", "TARGET_HIT"):
+                row  = active.to_row(ltp, reason, t, opt_ltp, lot=2)
                 mark = "✓" if float(row["fut_pnl_pts"]) > 0 else "✗"
-                print(f"\n  {mark} {reason}  {active.color} {active.session} {active.direction}  "
+                print(f"\n  {mark} {reason} lot2  {active.color} {active.session} {active.direction}  "
                       f"entry {active.entry_price:.2f} → {ltp:.2f}  "
                       f"fut {row['fut_pnl_pts']:+}pts  opt {row['option_pnl'] or '-'}\n")
                 append_trade(row)
+                zone_trades[active.zone_id] = zone_trades.get(active.zone_id, 0) + 1
                 active = None
 
         # ── zone tap / reaction ───────────────────────────────────────────────
         if active is None and prev_ltp is not None:
             for i, zone in enumerate(zones):
                 upper, lower = zone["upper"], zone["lower"]
+                zid = zone["id"]
 
-                last = tapped.get(i)
+                last = tapped.get(zid)
                 if last and (t - last).total_seconds() < cooldown_s:
                     continue
 
-                st = zone_state.get(i, "idle")
+                if zone_trades.get(zid, 0) >= 2:
+                    continue   # this zone has used its 2 trades today
+
+                st = zone_state.get(zid, "idle")
 
                 if st == "idle":
-                    in_zone = lower <= ltp      <= upper
-                    was_out = not (lower <= prev_ltp <= upper)
+                    in_zone  = lower <= ltp      <= upper
+                    was_out  = not (lower <= prev_ltp <= upper)
                     if in_zone and was_out:
+                        ztype      = zone.get("type", "neutral")
+                        is_neutral = zone_breached.get(zid, False) or ztype == "neutral"
                         if prev_ltp > upper:
-                            zone_state[i] = "tapped_ce"
-                            zone_extreme[i] = ltp          # track low for CE
-                            print(f"  ◎ TAPPED CE  {zone['color']} {zone['session']}  "
-                                  f"{upper:.0f}/{lower:.0f} — waiting for bounce above {upper + bounce_buffer:.2f}")
+                            if ztype == "supply" and not is_neutral:
+                                pass   # CE tap on supply zone — ignore until breached
+                            else:
+                                zone_state[zid]  = "tapped_ce"
+                                zone_extreme[zid] = ltp
+                                tag = f" [{ztype}]" if ztype != "neutral" else ""
+                                print(f"  ◎ TAPPED CE  {zone['color']} {zone['session']}{tag}  "
+                                      f"{upper:.0f}/{lower:.0f} — waiting for bounce above {upper + bounce_buffer:.2f}")
                         elif prev_ltp < lower:
-                            zone_state[i] = "tapped_pe"
-                            zone_extreme[i] = ltp          # track high for PE
-                            print(f"  ◎ TAPPED PE  {zone['color']} {zone['session']}  "
-                                  f"{upper:.0f}/{lower:.0f} — waiting for fade below {lower - bounce_buffer:.2f}")
+                            if ztype == "demand" and not is_neutral:
+                                pass   # PE tap on demand zone — ignore until breached
+                            else:
+                                zone_state[zid]  = "tapped_pe"
+                                zone_extreme[zid] = ltp
+                                tag = f" [{ztype}]" if ztype != "neutral" else ""
+                                print(f"  ◎ TAPPED PE  {zone['color']} {zone['session']}{tag}  "
+                                      f"{upper:.0f}/{lower:.0f} — waiting for fade below {lower - bounce_buffer:.2f}")
                     continue
 
                 entry_model = None
 
                 if st == "tapped_ce":
-                    zone_extreme[i] = min(zone_extreme.get(i, ltp), ltp)   # track lowest inside
+                    zone_extreme[zid] = min(zone_extreme.get(zid, ltp), ltp)   # track lowest inside
                     if ltp >= upper + bounce_buffer:
                         direction   = "CE"
                         entry_model = "boundary"
-                    elif ltp >= zone_extreme[i] + reversal_pts:
+                    elif ltp >= zone_extreme[zid] + reversal_pts:
                         direction   = "CE"
                         entry_model = "reversal"
                     elif ltp < lower:
-                        zone_state[i]   = "idle"
-                        zone_extreme.pop(i, None)
+                        zone_state[zid]   = "idle"
+                        zone_extreme.pop(zid, None)
                         print(f"  ✗ ZONE FAILED  {zone['session']} {upper:.0f}/{lower:.0f} — broke below")
                         continue
                     else:
                         continue
 
                 elif st == "tapped_pe":
-                    zone_extreme[i] = max(zone_extreme.get(i, ltp), ltp)   # track highest inside
+                    zone_extreme[zid] = max(zone_extreme.get(zid, ltp), ltp)   # track highest inside
                     if ltp < lower - bounce_buffer:
                         direction   = "PE"
                         entry_model = "boundary"
-                    elif ltp <= zone_extreme[i] - reversal_pts:
+                    elif ltp <= zone_extreme[zid] - reversal_pts:
                         direction   = "PE"
                         entry_model = "reversal"
                     elif ltp > upper:
-                        zone_state[i]   = "idle"
-                        zone_extreme.pop(i, None)
+                        zone_state[zid]   = "idle"
+                        zone_extreme.pop(zid, None)
                         print(f"  ✗ ZONE FAILED  {zone['session']} {upper:.0f}/{lower:.0f} — broke above")
                         continue
                     else:
@@ -391,24 +493,24 @@ async def run(state: dict | None = None) -> None:
 
                 # confirmed → compute SL from zone extreme (lowest inside for CE, highest for PE)
                 if direction == "CE":
-                    sl   = zone_extreme[i] - bounce_buffer
+                    sl   = zone_extreme[zid] - bounce_buffer
                     risk = ltp - sl
                 else:
-                    sl   = zone_extreme[i] + bounce_buffer
+                    sl   = zone_extreme[zid] + bounce_buffer
                     risk = sl - ltp
 
                 # skip if risk exceeds max_sl_pts
                 if risk > max_sl_pts:
-                    zone_state[i] = "idle"
-                    zone_extreme.pop(i, None)
-                    tapped[i] = t
+                    zone_state[zid] = "idle"
+                    zone_extreme.pop(zid, None)
+                    tapped[zid] = t
                     print(f"  [SKIP] {zone['session']} {upper:.0f}/{lower:.0f} {direction} "
                           f"— risk {risk:.0f}pts > {max_sl_pts:.0f}pts max")
                     continue
                 target = next_target(zones, zone, direction)
-                tapped[i]     = t
-                zone_state[i] = "idle"
-                zone_extreme.pop(i, None)
+                tapped[zid]     = t
+                zone_state[zid] = "idle"
+                zone_extreme.pop(zid, None)
 
                 if target is None:
                     print(f"  [SKIP] {zone['session']} {upper:.0f}/{lower:.0f} {direction} — no target")
@@ -419,7 +521,7 @@ async def run(state: dict | None = None) -> None:
                 opt_prices  = await fetch_prices(fyers, [opt_sym])
                 opt_premium = opt_prices.get(opt_sym)
 
-                active = Trade(zone, direction, ltp, sl, target, t,
+                active = Trade(zone, zid, direction, ltp, sl, target, t,
                                opt_strike, opt_sym, opt_premium)
 
                 opt_str = (f"  |  {direction} {opt_strike:.0f} @ {opt_premium:.0f}"

@@ -1,7 +1,7 @@
 *.log
 *.pyc
 __pycache__/
-trades.csv
+trades/
 .env
 config/.env
 fyersApi.log

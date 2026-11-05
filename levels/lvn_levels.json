@@ -1,21 +1,22 @@
 {
-  "comment": "Each zone is [upper_line, lower_line]. CE tap (from above) SL = lower. PE tap (from below) SL = upper.",
+  "comment": "Zone types: supply=bearish only, demand=bullish only, neutral=both. Breached when price moves breach_pts past the zone boundary — becomes neutral permanently for the day.",
   "crude_key": "MCX_FO|573422",
   "cooldown_min": 30,
   "bounce_buffer": 5,
   "max_sl_pts": 40,
   "reversal_pts": 20,
+  "breach_pts": 50,
   "d2": {
-    "date": "03 Nov",
+    "date": "05 Nov",
     "zones": [
-      [9691.00, 9612.00],
-      [9537.00, 9474.00],
-      [9400.00, 9290.00],
-      [9173.00, 9090.00]
+      {"id": "z1", "upper": 9203.00, "lower": 9162.00, "type": "supply"},
+      {"id": "z2", "upper": 8957.00, "lower": 8900.00, "type": "supply"},
+      {"id": "z3", "upper": 8655.00, "lower": 8563.00, "type": "supply"},
+      {"id": "z4", "upper": 8264.00, "lower": 8200.00, "type": "demand"}
     ]
   },
   "d1": {
-    "date": "03 Nov",
+    "date": "05 Nov",
     "zones": []
   }
 }
