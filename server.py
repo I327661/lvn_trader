@@ -401,8 +401,7 @@ def update_token():
         from fyers_apiv3 import fyersModel
         fyers_test = fyersModel.FyersModel(
             client_id=state["app_id"],
-            token=f"{state['app_id']}:{token}",
-            is_async=False,
+            token=token,
             log_path="",
         )
         result = fyers_test.get_profile()
