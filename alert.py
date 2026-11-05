@@ -250,6 +250,12 @@ async def run(state: dict | None = None) -> None:
         app_id=state["app_id"] if state else None,
     )
     zones         = cfg["_zones"]
+    if state is not None:
+        state["zones_cfg"] = [
+            {"id": z["id"], "upper": z["upper"], "lower": z["lower"],
+             "type": z.get("type", "neutral"), "session": z["session"]}
+            for z in zones
+        ]
     cooldown_s    = int(cfg.get("cooldown_min", 30)) * 60
     bounce_buffer = float(cfg.get("bounce_buffer", 5))
     max_sl_pts    = float(cfg.get("max_sl_pts", 30))
@@ -293,6 +299,9 @@ async def run(state: dict | None = None) -> None:
             zone_trades.clear()
             zone_breached.clear()
             ensure_csv()
+            if state is not None:
+                state["events"] = []
+                state["prices"] = []
             print(f"  [INFO] New day {today} — zone trade counts reset  |  Log: {daily_csv()}")
 
         # ── EOD flat ──────────────────────────────────────────────────────────
@@ -312,6 +321,14 @@ async def run(state: dict | None = None) -> None:
                 print(f"\n[{t:%H:%M}] EOD FLAT both lots {active.direction} fut {ltp:.0f}  "
                       f"fut_pnl {row['fut_pnl_pts']:+.0f}  opt_pnl {row['option_pnl'] or '-'}")
             append_trade(row)
+            if state is not None:
+                state["events"].append({
+                    "time":      int(datetime.now(timezone.utc).timestamp()),
+                    "type":      "exit",
+                    "direction": active.direction,
+                    "price":     ltp,
+                    "text":      f"EOD{float(row['fut_pnl_pts']):+.0f}",
+                })
             zone_trades[active.zone_id] = zone_trades.get(active.zone_id, 0) + 1
             active = None
 
@@ -329,6 +346,14 @@ async def run(state: dict | None = None) -> None:
             await asyncio.sleep(poll_s)
             continue
         opt_ltp = prices.get(active.option_sym) if active and active.option_sym else None
+
+        if state is not None:
+            unix_ts = int(datetime.now(timezone.utc).timestamp())
+            state["prices"].append({"time": unix_ts, "value": ltp})
+            if len(state["prices"]) > 600:
+                state["prices"] = state["prices"][-600:]
+            state["zone_trades"]   = dict(zone_trades)
+            state["zone_breached"] = dict(zone_breached)
 
         # ── breach scan ───────────────────────────────────────────────────────
         for zone in zones:
@@ -354,8 +379,15 @@ async def run(state: dict | None = None) -> None:
                     f"{icon}{active.direction} SL {active.sl:.2f}  T {active.target:.2f}{ctc_tag}")
             if state is not None:
                 state["price"] = ltp
-                state["trade"] = {"direction": active.direction, "entry": active.entry_price,
-                                  "sl": active.sl, "target": active.target}
+                state["trade"] = {
+                    "direction":   active.direction,
+                    "entry":       active.entry_price,
+                    "sl":          active.sl,
+                    "target":      active.target,
+                    "lot1_hit":    active.lot1_hit,
+                    "lot1_target": active.lot1_target,
+                    "risk":        active.risk,
+                }
         else:
             nearest = min(zones, key=lambda z: min(abs(ltp - z["upper"]), abs(ltp - z["lower"])))
             dist    = ltp - nearest["mid"]
@@ -389,6 +421,12 @@ async def run(state: dict | None = None) -> None:
             zone_extreme.clear()
             zone_breached.clear()
             # zone_trades and tapped intentionally preserved — id-keyed, survive boundary edits
+            state["zones_cfg"] = [
+                {"id": z["id"], "upper": z["upper"], "lower": z["lower"],
+                 "type": z.get("type", "neutral"), "session": z["session"]}
+                for z in zones
+            ]
+            state["events"] = []
             state["levels_updated"] = False
             print(f"  [INFO] Zones reloaded ({len(zones)} zones)")
 
@@ -404,6 +442,14 @@ async def run(state: dict | None = None) -> None:
                 append_trade(row)
                 active.lot1_hit = True
                 active.sl = active.entry_price   # update display SL to CTC
+                if state is not None:
+                    state["events"].append({
+                        "time":      int(datetime.now(timezone.utc).timestamp()),
+                        "type":      "lot1",
+                        "direction": active.direction,
+                        "price":     active.lot1_target,
+                        "text":      f"L1+{active.risk:.0f}",
+                    })
             elif reason in ("SL_HIT", "TARGET_HIT"):
                 row  = active.to_row(ltp, reason, t, opt_ltp, lot=2)
                 mark = "✓" if float(row["fut_pnl_pts"]) > 0 else "✗"
@@ -412,6 +458,14 @@ async def run(state: dict | None = None) -> None:
                       f"fut {row['fut_pnl_pts']:+}pts  opt {row['option_pnl'] or '-'}\n")
                 append_trade(row)
                 zone_trades[active.zone_id] = zone_trades.get(active.zone_id, 0) + 1
+                if state is not None:
+                    state["events"].append({
+                        "time":      int(datetime.now(timezone.utc).timestamp()),
+                        "type":      "exit",
+                        "direction": active.direction,
+                        "price":     ltp,
+                        "text":      f"{reason[:2]} {float(row['fut_pnl_pts']):+.0f}",
+                    })
                 active = None
 
         # ── zone tap / reaction ───────────────────────────────────────────────
@@ -523,6 +577,14 @@ async def run(state: dict | None = None) -> None:
 
                 active = Trade(zone, zid, direction, ltp, sl, target, t,
                                opt_strike, opt_sym, opt_premium)
+                if state is not None:
+                    state["events"].append({
+                        "time":      int(datetime.now(timezone.utc).timestamp()),
+                        "type":      "entry",
+                        "direction": direction,
+                        "price":     ltp,
+                        "text":      f"{direction} {ltp:.0f}",
+                    })
 
                 opt_str = (f"  |  {direction} {opt_strike:.0f} @ {opt_premium:.0f}"
                            if opt_premium else "  |  option N/A")
