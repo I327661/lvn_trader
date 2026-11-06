@@ -466,7 +466,7 @@ app = Flask(__name__)
 
 state: dict = {
     "app_id":         os.getenv("FYERS_APP_ID", "POGBT26YG3-100"),
-    "token":          os.getenv("FYERS_ACCESS_TOKEN", "") or _load_persisted_token(),
+    "token":          _load_persisted_token(),   # from .fyers_token file only — no env var
     "token_updated":  False,
     "levels_updated": False,
     "price":          None,
