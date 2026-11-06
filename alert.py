@@ -29,6 +29,7 @@ import sys
 from datetime import datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 
+import requests as _req
 from dotenv import load_dotenv
 from fyers_apiv3 import fyersModel
 
@@ -44,6 +45,22 @@ STRIKE_STEP  = 50
 
 IST       = timezone(timedelta(hours=5, minutes=30))
 MCX_OPEN  = dtime(9,  0)
+
+# ── Telegram ───────────────────────────────────────────────────────────────────
+_TG_TOKEN   = os.getenv("TELEGRAM_TOKEN", "")
+_TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
+def tg(msg: str) -> None:
+    if not _TG_TOKEN or not _TG_CHAT_ID:
+        return
+    try:
+        _req.post(
+            f"https://api.telegram.org/bot{_TG_TOKEN}/sendMessage",
+            json={"chat_id": _TG_CHAT_ID, "text": msg, "parse_mode": "HTML"},
+            timeout=5,
+        )
+    except Exception:
+        pass
 MCX_CLOSE = dtime(23, 30)
 
 
@@ -345,11 +362,15 @@ async def run(state: dict | None = None) -> None:
                 row = active.to_row(ltp, "EOD_FLAT", t, opt_exit, lot=2)
                 print(f"\n[{t:%H:%M}] EOD FLAT lot2 {active.direction} fut {ltp:.0f}  "
                       f"fut_pnl {row['fut_pnl_pts']:+.0f}  opt_pnl {row['option_pnl'] or '-'}")
+                tg(f"🔔 EOD FLAT (lot2) — {active.direction}\n"
+                   f"fut {ltp:.0f}  pnl {row['fut_pnl_pts']:+.0f}pts  opt {row['option_pnl'] or '-'}")
             else:
                 # Both lots still open; close both at same price
                 row = active.to_row(ltp, "EOD_FLAT", t, opt_exit, lot="1+2")
                 print(f"\n[{t:%H:%M}] EOD FLAT both lots {active.direction} fut {ltp:.0f}  "
                       f"fut_pnl {row['fut_pnl_pts']:+.0f}  opt_pnl {row['option_pnl'] or '-'}")
+                tg(f"🔔 EOD FLAT (both lots) — {active.direction}\n"
+                   f"fut {ltp:.0f}  pnl {row['fut_pnl_pts']:+.0f}pts  opt {row['option_pnl'] or '-'}")
             append_trade(row, state)
             if state is not None:
                 state["events"].append({
@@ -476,6 +497,9 @@ async def run(state: dict | None = None) -> None:
                 print(f"\n  ★ LOT1 BOOKED  {active.color} {active.session} {active.direction}  "
                       f"entry {active.entry_price:.2f} → {active.lot1_target:.2f}  "
                       f"+{active.risk:.0f}pts  |  LOT2 SL → CTC {active.entry_price:.2f}\n")
+                tg(f"★ LOT1 BOOKED — {active.color} {active.session} {active.direction}\n"
+                   f"entry {active.entry_price:.0f} → {active.lot1_target:.0f}  +{active.risk:.0f}pts\n"
+                   f"LOT2 SL → CTC {active.entry_price:.0f}")
                 append_trade(row, state)
                 active.sl = active.entry_price   # update display SL to CTC
                 if state is not None:
@@ -492,6 +516,9 @@ async def run(state: dict | None = None) -> None:
                 print(f"\n  {mark} {reason} lot2  {active.color} {active.session} {active.direction}  "
                       f"entry {active.entry_price:.2f} → {ltp:.2f}  "
                       f"fut {row['fut_pnl_pts']:+}pts  opt {row['option_pnl'] or '-'}\n")
+                tg(f"{mark} {reason} — {active.color} {active.session} {active.direction}\n"
+                   f"entry {active.entry_price:.0f} → {ltp:.0f}\n"
+                   f"fut {row['fut_pnl_pts']:+}pts  opt {row['option_pnl'] or '-'}")
                 append_trade(row, state)
                 if state is not None:
                     state["events"].append({
@@ -626,6 +653,9 @@ async def run(state: dict | None = None) -> None:
                 print(f"\n  ★ ENTER [{entry_model}]  {zone['color']} {zone['session']}  "
                       f"{upper:.2f}/{lower:.2f}  ({zone['date']})\n"
                       f"    {direction}  fut {ltp:.2f}  SL {sl:.2f}  T {target:.2f}{opt_str}\n")
+                tg(f"★ ENTER [{entry_model}] — {zone['color']} {zone['session']} {direction}\n"
+                   f"zone {upper:.0f}/{lower:.0f}  fut {ltp:.0f}  SL {sl:.0f}  T {target:.0f}\n"
+                   f"{opt_str.strip()}")
                 break
 
         prev_ltp = ltp
