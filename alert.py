@@ -388,6 +388,34 @@ async def run(state: dict | None = None) -> None:
             await asyncio.sleep(60)
             continue
 
+        # ── reload fyers if token updated ─────────────────────────────────────
+        if state is not None and state.get("token_updated"):
+            fyers = load_fyers(token=state["token"], app_id=state["app_id"])
+            state["token_updated"] = False
+            print("  [INFO] Fyers token reloaded")
+
+        # ── reload zones if levels updated ────────────────────────────────────
+        if state is not None and state.get("levels_updated"):
+            cfg = load_config()
+            zones = cfg["_zones"]
+            cooldown_s    = int(cfg.get("cooldown_min", 30)) * 60
+            bounce_buffer = float(cfg.get("bounce_buffer", 5))
+            max_sl_pts    = float(cfg.get("max_sl_pts", 30))
+            reversal_pts  = float(cfg.get("reversal_pts", 20))
+            breach_pts    = float(cfg.get("breach_pts", 50))
+            zone_state.clear()
+            zone_extreme.clear()
+            zone_breached.clear()
+            # zone_trades and tapped intentionally preserved — id-keyed, survive boundary edits
+            state["zones_cfg"] = [
+                {"id": z["id"], "upper": z["upper"], "lower": z["lower"],
+                 "type": z.get("type", "neutral"), "session": z["session"]}
+                for z in zones
+            ]
+            state["events"] = []
+            state["levels_updated"] = False
+            print(f"  [INFO] Zones reloaded ({len(zones)} zones)")
+
         # ── fetch prices ──────────────────────────────────────────────────────
         syms    = [FUT_SYMBOL] + ([active.option_sym] if active and active.option_sym else [])
         prices  = await fetch_prices(fyers, syms)
@@ -470,34 +498,6 @@ async def run(state: dict | None = None) -> None:
             state["log"].append(line)
             if len(state["log"]) > 50:
                 state["log"].pop(0)
-
-        # ── reload fyers if token updated ─────────────────────────────────────
-        if state is not None and state.get("token_updated"):
-            fyers = load_fyers(token=state["token"], app_id=state["app_id"])
-            state["token_updated"] = False
-            print("  [INFO] Fyers token reloaded")
-
-        # ── reload zones if levels updated ────────────────────────────────────
-        if state is not None and state.get("levels_updated"):
-            cfg = load_config()
-            zones = cfg["_zones"]
-            cooldown_s    = int(cfg.get("cooldown_min", 30)) * 60
-            bounce_buffer = float(cfg.get("bounce_buffer", 5))
-            max_sl_pts    = float(cfg.get("max_sl_pts", 30))
-            reversal_pts  = float(cfg.get("reversal_pts", 20))
-            breach_pts    = float(cfg.get("breach_pts", 50))
-            zone_state.clear()
-            zone_extreme.clear()
-            zone_breached.clear()
-            # zone_trades and tapped intentionally preserved — id-keyed, survive boundary edits
-            state["zones_cfg"] = [
-                {"id": z["id"], "upper": z["upper"], "lower": z["lower"],
-                 "type": z.get("type", "neutral"), "session": z["session"]}
-                for z in zones
-            ]
-            state["events"] = []
-            state["levels_updated"] = False
-            print(f"  [INFO] Zones reloaded ({len(zones)} zones)")
 
         # ── check exit ────────────────────────────────────────────────────────
         if active:
