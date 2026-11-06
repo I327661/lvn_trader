@@ -22,6 +22,7 @@ Usage
 from __future__ import annotations
 
 import asyncio
+import calendar
 import csv
 import json
 import os
@@ -374,7 +375,7 @@ async def run(state: dict | None = None) -> None:
             append_trade(row, state)
             if state is not None:
                 state["events"].append({
-                    "time":      int(datetime.now(timezone.utc).timestamp()),
+                    "time":      calendar.timegm(datetime.now(IST).replace(tzinfo=None, second=0, microsecond=0).timetuple()),
                     "type":      "exit",
                     "direction": active.direction,
                     "price":     ltp,
@@ -398,8 +399,10 @@ async def run(state: dict | None = None) -> None:
         opt_ltp = prices.get(active.option_sym) if active and active.option_sym else None
 
         if state is not None:
-            unix_ts   = int(datetime.now(timezone.utc).timestamp())
-            candle_ts = (unix_ts // 60) * 60
+            # Use IST wall-clock time encoded "as if UTC" via timegm — same
+            # trick as Options Manifesto so the chart shows IST labels correctly.
+            ist_now   = datetime.now(IST).replace(tzinfo=None)
+            candle_ts = calendar.timegm(ist_now.replace(second=0, microsecond=0).timetuple())
             candles   = state["candles"]
             if not candles or candles[-1]["time"] != candle_ts:
                 candles.append({"time": candle_ts, "open": ltp, "high": ltp, "low": ltp, "close": ltp})
@@ -504,7 +507,7 @@ async def run(state: dict | None = None) -> None:
                 active.sl = active.entry_price   # update display SL to CTC
                 if state is not None:
                     state["events"].append({
-                        "time":      int(datetime.now(timezone.utc).timestamp()),
+                        "time":      calendar.timegm(datetime.now(IST).replace(tzinfo=None, second=0, microsecond=0).timetuple()),
                         "type":      "lot1",
                         "direction": active.direction,
                         "price":     active.lot1_target,
@@ -522,7 +525,7 @@ async def run(state: dict | None = None) -> None:
                 append_trade(row, state)
                 if state is not None:
                     state["events"].append({
-                        "time":      int(datetime.now(timezone.utc).timestamp()),
+                        "time":      calendar.timegm(datetime.now(IST).replace(tzinfo=None, second=0, microsecond=0).timetuple()),
                         "type":      "exit",
                         "direction": active.direction,
                         "price":     ltp,
@@ -641,7 +644,7 @@ async def run(state: dict | None = None) -> None:
                                opt_strike, opt_sym, opt_premium)
                 if state is not None:
                     state["events"].append({
-                        "time":      int(datetime.now(timezone.utc).timestamp()),
+                        "time":      calendar.timegm(datetime.now(IST).replace(tzinfo=None, second=0, microsecond=0).timetuple()),
                         "type":      "entry",
                         "direction": direction,
                         "price":     ltp,

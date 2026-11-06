@@ -143,6 +143,13 @@ main{flex:1;display:flex;min-height:0}
 <main>
   <div class="chart-pane">
     <div id="chart"></div>
+    <div id="no-data" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
+      <div style="text-align:center;color:var(--dim)">
+        <div style="font-size:22px;margin-bottom:8px">📡</div>
+        <div style="font-size:12px;font-weight:700;letter-spacing:1px">WAITING FOR LIVE PRICES</div>
+        <div style="font-size:10px;margin-top:4px">Set token in ⚙ Settings to start</div>
+      </div>
+    </div>
     <button class="lbtn active" id="live-btn" style="position:absolute;top:8px;right:8px;z-index:10" onclick="goLive()">● LIVE</button>
     <div style="position:absolute;top:8px;right:74px;z-index:10;display:flex;gap:4px">
       <button class="lbtn" onclick="zoomIn()">＋</button>
@@ -201,7 +208,7 @@ const ser=chart.addCandlestickSeries({
 new ResizeObserver(()=>chart.applyOptions({width:el.offsetWidth,height:el.offsetHeight})).observe(el);
 
 // ── zone and trade price lines ─────────────────────────────────────────────────
-let zLines=[],tLines=[],zKey='',tKey='',firstLoad=true,lastP=null,userPanned=false;
+let zLines=[],tLines=[],zKey='',tKey='',lastBarTime=null,lastP=null,userPanned=false;
 
 chart.timeScale().subscribeVisibleLogicalRangeChange(()=>{
   userPanned=true;
@@ -362,21 +369,34 @@ function switchTab(tab){
 }
 
 // ── data polling ───────────────────────────────────────────────────────────────
+function updateChart(candles){
+  if(!candles||!candles.length)return;
+  const last=candles[candles.length-1];
+  if(lastBarTime===null||last.time<lastBarTime){
+    // first paint or day reset → full reload, fit view
+    ser.setData(candles);
+    chart.timeScale().fitContent();
+    lastBarTime=last.time;
+    setTimeout(()=>{userPanned=false;},500);
+  }else{
+    // incremental — only update new/forming candle(s)
+    candles.forEach(c=>{if(c.time>=lastBarTime)ser.update(c);});
+    lastBarTime=last.time;
+    if(!userPanned)chart.timeScale().scrollToRealTime();
+  }
+}
+
 async function refresh(){
   try{
     const r=await fetch('/prices');
     if(!r.ok)throw 0;
     const d=await r.json();
+    const nd=document.getElementById('no-data');
     if(d.candles&&d.candles.length){
-      ser.setData(d.candles);
-      const now=Math.floor(Date.now()/1000);
-      if(firstLoad){
-        chart.timeScale().setVisibleRange({from:now-4*3600,to:now+300});
-        firstLoad=false;
-        setTimeout(()=>{userPanned=false;},500);
-      }else if(!userPanned){
-        chart.timeScale().scrollToRealTime();
-      }
+      nd.style.display='none';
+      updateChart(d.candles);
+    }else{
+      nd.style.display='';
     }
     drawZones(d.zones_cfg||[],d.zone_breached||{});
     drawTrade(d.trade);
