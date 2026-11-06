@@ -156,13 +156,23 @@ def ensure_csv() -> None:
             csv.writer(f).writerow(CSV_HEADERS)
 
 
-def append_trade(row: dict) -> None:
+def append_trade(row: dict, state: dict | None = None) -> None:
     path = daily_csv()
-    if not path.exists():       # new day rolled over between ensure and append
+    if not path.exists():
         with open(path, "w", newline="") as f:
             csv.writer(f).writerow(CSV_HEADERS)
     with open(path, "a", newline="") as f:
         csv.writer(f).writerow([row.get(h, "") for h in CSV_HEADERS])
+    if state is not None:
+        state["trades"].append({
+            "exit_time":   row.get("exit_time", ""),
+            "direction":   row.get("direction", ""),
+            "zone_upper":  row.get("zone_upper", ""),
+            "zone_lower":  row.get("zone_lower", ""),
+            "exit_reason": row.get("exit_reason", ""),
+            "fut_pnl_pts": row.get("fut_pnl_pts", ""),
+            "lot":         row.get("lot", ""),
+        })
 
 
 # ── trade ─────────────────────────────────────────────────────────────────────
@@ -321,6 +331,7 @@ async def run(state: dict | None = None) -> None:
             if state is not None:
                 state["events"] = []
                 state["candles"] = []
+                state["trades"] = []
             print(f"  [INFO] New day {today} — zone trade counts reset  |  Log: {daily_csv()}")
 
         # ── EOD flat ──────────────────────────────────────────────────────────
@@ -339,7 +350,7 @@ async def run(state: dict | None = None) -> None:
                 row = active.to_row(ltp, "EOD_FLAT", t, opt_exit, lot="1+2")
                 print(f"\n[{t:%H:%M}] EOD FLAT both lots {active.direction} fut {ltp:.0f}  "
                       f"fut_pnl {row['fut_pnl_pts']:+.0f}  opt_pnl {row['option_pnl'] or '-'}")
-            append_trade(row)
+            append_trade(row, state)
             if state is not None:
                 state["events"].append({
                     "time":      int(datetime.now(timezone.utc).timestamp()),
@@ -348,7 +359,6 @@ async def run(state: dict | None = None) -> None:
                     "price":     ltp,
                     "text":      f"EOD{float(row['fut_pnl_pts']):+.0f}",
                 })
-            zone_trades[active.zone_id] = zone_trades.get(active.zone_id, 0) + 1
             active = None
 
         if t.time() < MCX_OPEN or t.time() > MCX_CLOSE:
@@ -466,8 +476,7 @@ async def run(state: dict | None = None) -> None:
                 print(f"\n  ★ LOT1 BOOKED  {active.color} {active.session} {active.direction}  "
                       f"entry {active.entry_price:.2f} → {active.lot1_target:.2f}  "
                       f"+{active.risk:.0f}pts  |  LOT2 SL → CTC {active.entry_price:.2f}\n")
-                append_trade(row)
-                active.lot1_hit = True
+                append_trade(row, state)
                 active.sl = active.entry_price   # update display SL to CTC
                 if state is not None:
                     state["events"].append({
@@ -483,8 +492,7 @@ async def run(state: dict | None = None) -> None:
                 print(f"\n  {mark} {reason} lot2  {active.color} {active.session} {active.direction}  "
                       f"entry {active.entry_price:.2f} → {ltp:.2f}  "
                       f"fut {row['fut_pnl_pts']:+}pts  opt {row['option_pnl'] or '-'}\n")
-                append_trade(row)
-                zone_trades[active.zone_id] = zone_trades.get(active.zone_id, 0) + 1
+                append_trade(row, state)
                 if state is not None:
                     state["events"].append({
                         "time":      int(datetime.now(timezone.utc).timestamp()),

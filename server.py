@@ -120,6 +120,12 @@ main{flex:1;display:flex;min-height:0}
 .lbtn{background:none;border:1px solid var(--border2);color:var(--dim);padding:2px 9px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;font-family:var(--font);letter-spacing:.5px;transition:all .2s}
 .lbtn:hover{border-color:var(--blue);color:var(--blue)}
 .lbtn.active{border-color:var(--green);color:var(--green)}
+.tab-btn{background:none;border:none;color:var(--dim2);font-size:10px;font-weight:800;letter-spacing:1.2px;cursor:pointer;font-family:var(--font);padding:3px 6px;border-bottom:2px solid transparent;transition:all .2s}
+.tab-btn.active{color:var(--text);border-bottom-color:var(--blue)}
+.tab-btn:hover{color:var(--text)}
+.trow{font-size:10px;font-family:var(--mono);padding:5px 0;border-bottom:1px solid #111;display:grid;grid-template-columns:46px 28px 1fr auto;gap:4px;align-items:center}
+.trow .tr-dir{font-weight:800}.trow .ce{color:var(--green)}.trow .pe{color:var(--red)}
+.trow .tr-pnl{font-weight:700;text-align:right}.trow .pnl-pos{color:var(--green)}.trow .pnl-neg{color:var(--red)}
 </style>
 </head>
 <body>
@@ -153,10 +159,12 @@ main{flex:1;display:flex;min-height:0}
       <div id="zones-list"></div>
     </div>
     <div class="log-wrap">
-      <div class="card" style="border-bottom:none;padding-bottom:5px">
-        <div class="ctitle">LOG</div>
+      <div class="card" style="border-bottom:none;padding-bottom:4px;display:flex;align-items:center;gap:8px">
+        <button class="tab-btn active" id="tab-log" onclick="switchTab('log')">LOG</button>
+        <button class="tab-btn" id="tab-trades" onclick="switchTab('trades')">TRADES</button>
       </div>
       <div class="log-inner" id="log-inner"></div>
+      <div class="log-inner" id="trades-inner" style="display:none"></div>
     </div>
     <div class="settings">
       <details>
@@ -164,11 +172,11 @@ main{flex:1;display:flex;min-height:0}
         <form class="sform" onsubmit="doExchange(event)">
           <div style="font-size:10px;color:var(--dim);margin-bottom:2px">Step 1 — Login to Fyers:</div>
           <a href="/fyers-login" target="_blank" class="sbtn" style="display:block;text-align:center;text-decoration:none;padding:5px 0">🔑 Open Fyers Login →</a>
-          <div style="font-size:10px;color:var(--dim);margin-top:6px;margin-bottom:2px">Step 2 — Paste the auth code from the redirect URL:</div>
+          <div style="font-size:10px;color:var(--dim);margin-top:6px;margin-bottom:2px">Step 2 — Paste auth code from redirect URL:</div>
           <input id="authcode" placeholder="Paste auth code JWT here…" autocomplete="off">
           <button class="sbtn" type="submit" id="exc-btn">Exchange &amp; Start Trading</button>
         </form>
-        <a href="/levels" class="slnk">Edit Zones JSON →</a>
+        <a href="/levels" class="slnk">✏ Edit Zones &amp; Levels →</a>
       </details>
     </div>
   </div>
@@ -330,7 +338,27 @@ function render(d){
   }).join('');
   if(atBot)li.scrollTop=li.scrollHeight;
 
+  // trades panel
+  const trades=d.trades||[],ti=document.getElementById('trades-inner');
+  if(trades.length===0){
+    ti.innerHTML='<div class="ll" style="padding:8px 0;color:var(--dim2)">No trades today</div>';
+  }else{
+    ti.innerHTML=[...trades].reverse().map(t=>{
+      const dir=t.direction||'';
+      const pnl=parseFloat(t.fut_pnl_pts||0);
+      const pc=pnl>=0?'pnl-pos':'pnl-neg';
+      return`<div class="trow"><span class="ll" style="font-size:10px">${t.exit_time||''}</span><span class="tr-dir ${dir.toLowerCase()}">${dir}</span><span style="color:var(--dim)">${t.exit_reason||''} L${t.lot||''}</span><span class="tr-pnl ${pc}">${pnl>=0?'+':''}${pnl}pts</span></div>`;
+    }).join('');
+  }
+
   document.getElementById('feed-dot').className='feed-dot live';
+}
+
+function switchTab(tab){
+  document.getElementById('log-inner').style.display=tab==='log'?'':'none';
+  document.getElementById('trades-inner').style.display=tab==='trades'?'':'none';
+  document.getElementById('tab-log').className='tab-btn'+(tab==='log'?' active':'');
+  document.getElementById('tab-trades').className='tab-btn'+(tab==='trades'?' active':'');
 }
 
 // ── data polling ───────────────────────────────────────────────────────────────
@@ -406,6 +434,7 @@ state: dict = {
     "zones_cfg":      [],    # [{id, upper, lower, type, session}] — zone lines
     "zone_trades":    {},    # {zone_id: count} — mirrored from alert.py
     "zone_breached":  {},    # {zone_id: bool}  — mirrored from alert.py
+    "trades":         [],    # completed trades today [{exit_time, direction, exit_reason, fut_pnl_pts, lot}]
 }
 
 
@@ -426,6 +455,7 @@ def api_prices():
         "zones_cfg":     state["zones_cfg"],
         "zone_trades":   state["zone_trades"],
         "zone_breached": state["zone_breached"],
+        "trades":        state["trades"],
     })
 
 
@@ -503,35 +533,132 @@ def update_token():
 @app.route("/levels", methods=["GET", "POST"])
 def levels():
     if request.method == "POST":
-        raw = request.form.get("levels_json", "").strip()
         try:
-            json.loads(raw)
-            LEVELS_FILE.write_text(raw)
+            cfg = _parse_levels_form(request.form)
+            LEVELS_FILE.write_text(json.dumps(cfg, indent=2))
             state["levels_updated"] = True
             return redirect("/")
-        except json.JSONDecodeError as e:
-            return _levels_page(raw, str(e))
-    current = LEVELS_FILE.read_text() if LEVELS_FILE.exists() else "{}"
-    return _levels_page(current)
+        except Exception as e:
+            cfg = _read_levels_cfg()
+            return _levels_page(cfg, str(e))
+    return _levels_page(_read_levels_cfg())
 
 
-def _levels_page(current_json: str, error: str = "") -> str:
-    err_html = f'<p style="color:#f66">{error}</p>' if error else ""
-    return f"""<!doctype html>
-<html><head><title>Edit Zones</title>
-<style>body{{font-family:monospace;background:#111;color:#eee;padding:20px}}
-textarea{{width:700px;height:420px;padding:8px;background:#1a1a1a;color:#eee;border:1px solid #333}}
-button{{padding:8px 20px;margin-top:10px;background:#1a2a1a;color:#3fd68a;border:1px solid #3fd68a;cursor:pointer}}
-a{{color:#5aa9ff}} hr{{border-color:#333}}</style>
-</head><body>
-<h2 style="margin-bottom:12px">Edit Zones</h2>
-<p><a href="/">&#8592; Back to dashboard</a></p>
-{err_html}
-<form method="post" style="margin-top:14px">
-  <textarea name="levels_json">{current_json}</textarea><br>
-  <button type="submit">Update Zones</button>
+def _read_levels_cfg() -> dict:
+    try:
+        return json.loads(LEVELS_FILE.read_text()) if LEVELS_FILE.exists() else {}
+    except Exception:
+        return {}
+
+
+def _parse_levels_form(form) -> dict:
+    def parse_zones(session):
+        zones, i = [], 0
+        while f"{session}_upper_{i}" in form:
+            upper = float(form[f"{session}_upper_{i}"])
+            lower = float(form[f"{session}_lower_{i}"])
+            ztype = form.get(f"{session}_type_{i}", "neutral")
+            zones.append({"id": f"z{i+1}", "upper": upper, "lower": lower, "type": ztype})
+            i += 1
+        return zones
+    return {
+        "comment": "Zone types: supply=bearish, demand=bullish, neutral=both",
+        "crude_key":    form.get("crude_key", "MCX_FO|573422"),
+        "cooldown_min": int(form.get("cooldown_min", 30)),
+        "bounce_buffer": float(form.get("bounce_buffer", 5)),
+        "max_sl_pts":   float(form.get("max_sl_pts", 40)),
+        "reversal_pts": float(form.get("reversal_pts", 20)),
+        "breach_pts":   float(form.get("breach_pts", 50)),
+        "d2": {"date": form.get("d2_date", ""), "zones": parse_zones("d2")},
+        "d1": {"date": form.get("d1_date", ""), "zones": parse_zones("d1")},
+    }
+
+
+def _levels_page(cfg: dict, error: str = "") -> str:
+    def zone_rows(session, zones):
+        rows = ""
+        for i, z in enumerate(zones):
+            s = z.get("type", "neutral")
+            rows += f"""<tr><td><input type="number" name="{session}_upper_{i}" value="{z['upper']}" step="0.5" required></td>
+<td><input type="number" name="{session}_lower_{i}" value="{z['lower']}" step="0.5" required></td>
+<td><select name="{session}_type_{i}">
+  <option value="supply"{"  selected" if s=="supply" else ""}>Supply (Bearish)</option>
+  <option value="demand"{"  selected" if s=="demand" else ""}>Demand (Bullish)</option>
+  <option value="neutral"{"  selected" if s=="neutral" else ""}>Neutral (Both)</option>
+</select></td>
+<td><button type="button" onclick="this.closest('tr').remove()" class="del">✕</button></td></tr>"""
+        return rows
+
+    d2 = cfg.get("d2", {}); d1 = cfg.get("d1", {})
+    err = f'<div class="err">{error}</div>' if error else ""
+    return f"""<!doctype html><html><head><title>LVN — Edit Levels</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:"Inter","Segoe UI",sans-serif;background:#090c12;color:#e2e8f0;padding:16px;font-size:13px}}
+h2{{color:#5aa9ff;margin-bottom:14px;font-size:15px;font-weight:800}}
+.card{{background:#0d1117;border:1px solid #1e2a38;border-radius:8px;padding:14px;margin-bottom:14px}}
+.stitle{{font-size:10px;font-weight:800;letter-spacing:1.2px;color:#6e8098;text-transform:uppercase;margin-bottom:10px}}
+table{{width:100%;border-collapse:collapse;margin-bottom:6px}}
+th{{font-size:10px;color:#6e8098;text-align:left;padding:5px 8px;border-bottom:1px solid #1e2a38;font-weight:600}}
+td{{padding:4px 6px}}
+input,select{{background:#111824;color:#e2e8f0;border:1px solid #2a3a50;border-radius:4px;padding:5px 8px;font-size:12px;width:100%;font-family:inherit}}
+input:focus,select:focus{{outline:none;border-color:#5aa9ff}}
+.grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:6px}}
+label{{font-size:10px;color:#6e8098;display:block;margin-bottom:3px;letter-spacing:.3px}}
+.date-row{{display:flex;align-items:center;gap:8px;margin-bottom:10px}}
+.date-row label{{white-space:nowrap;margin:0}}
+.date-row input{{max-width:110px}}
+.save{{background:none;border:1px solid #3fd68a;color:#3fd68a;padding:8px 24px;border-radius:5px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit}}
+.save:hover{{background:#0d211a}}
+.add{{background:none;border:1px dashed #2a3a50;color:#6e8098;padding:6px;font-size:11px;border-radius:4px;cursor:pointer;width:100%;transition:all .2s;font-family:inherit}}
+.add:hover{{border-color:#5aa9ff;color:#5aa9ff}}
+.del{{background:none;border:1px solid #ff5c5c44;color:#ff5c5c;padding:2px 7px;font-size:11px;border-radius:4px;cursor:pointer}}
+.del:hover{{background:#221215;border-color:#ff5c5c}}
+.err{{color:#ff5c5c;background:#221215;padding:8px 12px;border-radius:5px;margin-bottom:12px;font-size:12px}}
+a{{color:#5aa9ff;font-size:12px;text-decoration:none}}
+</style></head><body>
+<p style="margin-bottom:12px"><a href="/">← Dashboard</a></p>
+<h2>Edit Levels</h2>{err}
+<form method="post">
+<input type="hidden" name="crude_key" value="{cfg.get('crude_key','MCX_FO|573422')}">
+<div class="card">
+  <div class="stitle">D2 Zones</div>
+  <div class="date-row"><label>Session Date:</label>
+    <input type="text" name="d2_date" value="{d2.get('date','')}" placeholder="06 Nov" style="max-width:100px"></div>
+  <table><thead><tr><th>Upper</th><th>Lower</th><th>Type</th><th></th></tr></thead>
+  <tbody id="d2_body">{zone_rows('d2', d2.get('zones',[]))}</tbody></table>
+  <button type="button" class="add" onclick="addRow('d2')">+ Add Zone</button>
+</div>
+<div class="card">
+  <div class="stitle">D1 Zones</div>
+  <div class="date-row"><label>Session Date:</label>
+    <input type="text" name="d1_date" value="{d1.get('date','')}" placeholder="05 Nov" style="max-width:100px"></div>
+  <table><thead><tr><th>Upper</th><th>Lower</th><th>Type</th><th></th></tr></thead>
+  <tbody id="d1_body">{zone_rows('d1', d1.get('zones',[]))}</tbody></table>
+  <button type="button" class="add" onclick="addRow('d1')">+ Add Zone</button>
+</div>
+<div class="card">
+  <div class="stitle">Parameters</div>
+  <div class="grid">
+    <div><label>Cooldown (min)</label><input type="number" name="cooldown_min" value="{cfg.get('cooldown_min',30)}" min="1"></div>
+    <div><label>Bounce Buffer (pts)</label><input type="number" name="bounce_buffer" value="{cfg.get('bounce_buffer',5)}" step="0.5" min="0"></div>
+    <div><label>Max SL (pts)</label><input type="number" name="max_sl_pts" value="{cfg.get('max_sl_pts',40)}" min="1"></div>
+    <div><label>Reversal (pts)</label><input type="number" name="reversal_pts" value="{cfg.get('reversal_pts',20)}" min="1"></div>
+    <div><label>Breach (pts)</label><input type="number" name="breach_pts" value="{cfg.get('breach_pts',50)}" min="1"></div>
+  </div>
+</div>
+<button type="submit" class="save">Save &amp; Apply</button>
 </form>
-</body></html>"""
+<script>
+const counts={{d2:{len(d2.get('zones',[]))},d1:{len(d1.get('zones',[]))}}};
+function addRow(s){{
+  const i=counts[s]++;
+  const tr=document.createElement('tr');
+  tr.innerHTML=`<td><input type="number" name="${{s}}_upper_${{i}}" step="0.5" placeholder="9200" required></td><td><input type="number" name="${{s}}_lower_${{i}}" step="0.5" placeholder="9160" required></td><td><select name="${{s}}_type_${{i}}"><option value="supply">Supply (Bearish)</option><option value="demand">Demand (Bullish)</option><option value="neutral">Neutral (Both)</option></select></td><td><button type="button" onclick="this.closest('tr').remove()" class="del">✕</button></td>`;
+  document.getElementById(s+'_body').appendChild(tr);
+}}
+</script></body></html>"""
 
 
 @app.route("/status")
