@@ -66,6 +66,9 @@ header{display:flex;align-items:center;gap:14px;padding:7px 16px;background:line
 .feed-dot.dead{background:var(--red)}
 .feed-dot.stale{background:var(--amber)}
 @keyframes fdp{0%{box-shadow:0 0 0 0 rgba(63,214,138,.6)}100%{box-shadow:0 0 0 7px rgba(63,214,138,0)}}
+.fyers-chip{font-size:9px;font-weight:800;letter-spacing:.8px;padding:2px 7px;border-radius:4px;border:1px solid var(--border2);color:var(--dim)}
+.fyers-chip.ok{background:#0a1c14;color:var(--green);border-color:var(--green)}
+.fyers-chip.err{background:#1c0a0c;color:var(--red);border-color:var(--red)}
 
 /* layout */
 main{flex:1;display:flex;min-height:0}
@@ -138,13 +141,14 @@ main{flex:1;display:flex;min-height:0}
   </div>
   <div class="tbadge flat" id="tbadge">FLAT</div>
   <span id="hdr-time"></span>
+  <span id="fyers-chip" class="fyers-chip">FYERS</span>
   <div class="feed-dot" id="feed-dot"></div>
 </header>
 <main>
   <div class="chart-pane">
     <div id="chart"></div>
     <div id="no-data" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
-      <div style="text-align:center;color:var(--dim)">
+      <div style="text-align:center;color:var(--dim)" id="no-data-inner">
         <div style="font-size:22px;margin-bottom:8px">📡</div>
         <div style="font-size:12px;font-weight:700;letter-spacing:1px">WAITING FOR LIVE PRICES</div>
         <div style="font-size:10px;margin-top:4px">Set token in ⚙ Settings to start</div>
@@ -359,6 +363,19 @@ function render(d){
   }
 
   document.getElementById('feed-dot').className='feed-dot live';
+
+  // Fyers connection chip
+  const chip=document.getElementById('fyers-chip');
+  if(d.fyers_ok){
+    chip.className='fyers-chip ok';
+    chip.textContent='FYERS '+(d.last_price_ist||'');
+  }else if(d.has_token){
+    chip.className='fyers-chip err';
+    chip.textContent='FYERS ERR';
+  }else{
+    chip.className='fyers-chip';
+    chip.textContent='NO TOKEN';
+  }
 }
 
 function switchTab(tab){
@@ -396,6 +413,12 @@ async function refresh(){
       nd.style.display='none';
       updateChart(d.candles);
     }else{
+      const inner=document.getElementById('no-data-inner');
+      if(d.has_token&&!d.fyers_ok){
+        inner.innerHTML='<div style="font-size:22px;margin-bottom:8px">⚠️</div><div style="font-size:12px;font-weight:700;letter-spacing:1px;color:var(--amber)">TOKEN EXPIRED</div><div style="font-size:10px;margin-top:4px">Open ⚙ Settings → Fyers Login to refresh</div>';
+      }else{
+        inner.innerHTML='<div style="font-size:22px;margin-bottom:8px">📡</div><div style="font-size:12px;font-weight:700;letter-spacing:1px">WAITING FOR LIVE PRICES</div><div style="font-size:10px;margin-top:4px">Open ⚙ Settings → Fyers Login to start</div>';
+      }
       nd.style.display='';
     }
     drawZones(d.zones_cfg||[],d.zone_breached||{});
@@ -455,6 +478,8 @@ state: dict = {
     "zone_trades":    {},    # {zone_id: count} — mirrored from alert.py
     "zone_breached":  {},    # {zone_id: bool}  — mirrored from alert.py
     "trades":         [],    # completed trades today [{exit_time, direction, exit_reason, fut_pnl_pts, lot}]
+    "fyers_ok":       False, # True when prices are coming through
+    "last_price_ist": None,  # IST time of last successful price ("HH:MM:SS")
 }
 
 
@@ -467,15 +492,18 @@ def index():
 @app.route("/prices")
 def api_prices():
     return jsonify({
-        "price":         state["price"],
-        "trade":         state["trade"],
-        "log":           state["log"],
-        "candles":       state["candles"],
-        "events":        state["events"],
-        "zones_cfg":     state["zones_cfg"],
-        "zone_trades":   state["zone_trades"],
-        "zone_breached": state["zone_breached"],
-        "trades":        state["trades"],
+        "price":           state["price"],
+        "trade":           state["trade"],
+        "log":             state["log"],
+        "candles":         state["candles"],
+        "events":          state["events"],
+        "zones_cfg":       state["zones_cfg"],
+        "zone_trades":     state["zone_trades"],
+        "zone_breached":   state["zone_breached"],
+        "trades":          state["trades"],
+        "fyers_ok":        state.get("fyers_ok", False),
+        "last_price_ist":  state.get("last_price_ist"),
+        "has_token":       bool(state.get("token")),
     })
 
 

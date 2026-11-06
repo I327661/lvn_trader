@@ -394,11 +394,19 @@ async def run(state: dict | None = None) -> None:
         ltp     = prices.get(FUT_SYMBOL)
         if ltp is None:
             print(f"[{t:%H:%M:%S}]  [WARN] no LTP received")
+            if state is not None:
+                state["fyers_ok"] = False
+                warn = f"[{t:%H:%M}] ⚠ Fyers: no price — token expired? Refresh in Settings"
+                if not state["log"] or state["log"][-1] != warn:
+                    state["log"].append(warn)
+                    state["log"] = state["log"][-60:]
             await asyncio.sleep(poll_s)
             continue
         opt_ltp = prices.get(active.option_sym) if active and active.option_sym else None
 
         if state is not None:
+            state["fyers_ok"]       = True
+            state["last_price_ist"] = t.strftime("%H:%M:%S")
             # Use IST wall-clock time encoded "as if UTC" via timegm — same
             # trick as Options Manifesto so the chart shows IST labels correctly.
             ist_now   = datetime.now(IST).replace(tzinfo=None)
